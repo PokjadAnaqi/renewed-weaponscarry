@@ -28,12 +28,32 @@ local function formatPlayerInventory(inventory, currentWeapon)
     local items = {}
     local amount = 0
 
-    for _, itemData in pairs(inventory) do
-        local name = itemData and itemData.name:lower()
+    -- for _, itemData in pairs(inventory) do
+    --     local name = itemData and itemData.name:lower()
+    -- 
+    --     if currentWeapon and itemData and currentWeapon.name == itemData.name and lib.table.matches(itemData.metadata.components, currentWeapon.metadata.components) then
+    --         currentWeapon = nil
+    --     elseif name and Config[name] then
+    --         amount += 1
+    --         items[amount] = Utils.formatData(itemData, Config[name])
+    --     end
+    -- end
 
-        if currentWeapon and itemData and currentWeapon.name == itemData.name and lib.table.matches(itemData.metadata.components, currentWeapon.metadata.components) then
+    -- ONLY USE 1-6 SLOT
+    for _, itemData in pairs(inventory) do
+        local name = itemData and itemData.name and itemData.name:lower()
+        local slot = itemData and tonumber(itemData.slot)  -- ox_inventory item slot
+    
+        -- skip anything outside 1..6
+        local slotAllowed = slot and slot >= 1 and slot <= 6
+    
+        if currentWeapon and itemData
+            and currentWeapon.name == itemData.name
+            and lib.table.matches(itemData.metadata.components, currentWeapon.metadata.components)
+        then
+            -- Exclude the actively held weapon from back/prop render
             currentWeapon = nil
-        elseif name and Config[name] then
+        elseif name and Config[name] and slotAllowed then
             amount += 1
             items[amount] = Utils.formatData(itemData, Config[name])
         end
