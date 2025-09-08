@@ -6,6 +6,45 @@ local Inventory = exports.ox_inventory:GetPlayerItems() or {}
 local playerState = LocalPlayer.state
 local currentWeapon = {}
 
+-- Flashlight loop lifecycle
+local FLASH_LOOP_KEY = nil
+
+local function startFlashLoopIfNeeded(weapon)
+    if not weapon or not weapon.metadata then return end
+    if not hasFlashLight(weapon.metadata.components) then return end
+
+    local serial = weapon.metadata.serial
+    if serial and serial ~= FLASH_LOOP_KEY then
+        -- stop previous loop if module provides a stopper
+        if FLASH_LOOP_KEY and weaponModule.stopFlashlight then
+            pcall(weaponModule.stopFlashlight, FLASH_LOOP_KEY)
+        end
+        FLASH_LOOP_KEY = serial
+        CreateThread(function()
+            weaponModule.loopFlashlight(serial)
+        end)
+    end
+end
+
+local function stopFlashLoop()
+    if FLASH_LOOP_KEY and weaponModule.stopFlashlight then
+        pcall(weaponModule.stopFlashlight, FLASH_LOOP_KEY)
+    end
+    FLASH_LOOP_KEY = nil
+end
+
+-- Debounce heavy rebuilds to next tick
+local _scheduled = false
+local function scheduleRefresh()
+    if _scheduled then return end
+    _scheduled = true
+    SetTimeout(0, function()
+        _scheduled = false
+        weaponModule.updateWeapons(Inventory, currentWeapon)
+        carryModule.updateCarryState(Inventory)
+    end)
+end
+
 local hasFlashLight = require 'modules.utils'.hasFlashLight
 AddEventHandler('ox_inventory:currentWeapon', function(weapon)
     if weapon and weapon.name then
@@ -13,21 +52,22 @@ AddEventHandler('ox_inventory:currentWeapon', function(weapon)
         if weaponsConfig[searchName] then
             currentWeapon = weapon
 
-            if hasFlashLight(currentWeapon.metadata.components) then
-                CreateThread(function()
-                    weaponModule.loopFlashlight(currentWeapon.metadata.serial)
-                end)
-            end
+            startFlashLoopIfNeeded(currentWeapon)
+            scheduleRefresh()
+            return
 
-            return weaponModule.updateWeapons(Inventory, currentWeapon)
         end
     else
-        local weaponName = currentWeapon?.name and currentWeapon.name:lower()
-
+        local weaponName = (currentWeapon and currentWeapon.name) and currentWeapon.name:lower() or nil
+        
+        -- stop any running flashlight loop
+        stopFlashLoop()
+        
         currentWeapon = {}
-
+        
         if weaponName and weaponsConfig[weaponName] then
-            return weaponModule.updateWeapons(Inventory, {})
+            scheduleRefresh()
+            return
         end
     end
 end)
@@ -39,11 +79,15 @@ AddEventHandler('ox_inventory:updateInventory', function(changes)
     end
 
     for slot, item in pairs(changes) do
-        Inventory[slot] = item
+        local s = tonumber(slot) or slot
+        if item == nil or item == false then
+            Inventory[s] = nil       -- clear removed slot
+        else
+            Inventory[s] = item      -- add/update slot
+        end
     end
 
-    weaponModule.updateWeapons(Inventory, currentWeapon)
-    carryModule.updateCarryState(Inventory)
+    scheduleRefresh()
 end)
 
 AddEventHandler('onResourceStart', function(resource)
@@ -52,13 +96,13 @@ AddEventHandler('onResourceStart', function(resource)
         if table.type(playerState.weapons_carry or {}) ~= 'empty' then
             playerState:set('weapons_carry', false, true)
 
-            weaponModule.updateWeapons(Inventory, currentWeapon)
+            scheduleRefresh()
         end
 
         if table.type(playerState.carry_items or {}) ~= 'empty' then
             playerState:set('carry_items', false, true)
 
-            carryModule.updateCarryState(Inventory)
+            scheduleRefresh()
         end
     end
 end)
@@ -80,7 +124,7 @@ local function refreshWeapons()
 
         playerState:set('weapons_carry', false, true)
 
-        weaponModule.updateWeapons(Inventory, currentWeapon)
+        scheduleRefresh()
     end
 end exports("RefreshWeapons", refreshWeapons)
 
@@ -99,10 +143,10 @@ AddStateBagChangeHandler('hide_props', ('player:%s'):format(cache.serverId), fun
             playerState:set('carry_items', false, true)
             playerState:set('carry_loop', false, true)
         end
+        stopFlashLoop()
     else
         CreateThread(function()
-            weaponModule.updateWeapons(Inventory, currentWeapon)
-            carryModule.updateCarryState(Inventory)
+            scheduleRefresh()
         end)
     end
 end)
